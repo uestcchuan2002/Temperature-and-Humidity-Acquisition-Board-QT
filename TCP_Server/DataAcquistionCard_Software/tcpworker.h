@@ -8,6 +8,14 @@
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QCoreApplication>
+
+
+enum WorkerState {
+    Idle,       // 空闲
+    Upgrading,  // 升级中
+    Collecting  // 传感器数据采集
+};
+
 class TcpWorker : public QObject
 {
     Q_OBJECT
@@ -31,6 +39,9 @@ signals:
 
 private:
     QTcpSocket *socket;
+    WorkerState m_currentState = Idle;
+    QByteArray ackBuffer;       // 专门存 OTA 应答 (B0)
+    QByteArray sensorBuffer;    // 专门存 传感器数据 (D0)
 
 private:
     bool sendStartPacket(int size);
@@ -38,7 +49,7 @@ private:
     bool sendEndPacket();
 
     bool waitAck(int timeout = 3000);
-    QByteArray recvBuffer;
+    void parseSensorData();
 
     quint16 crc16_modbus(const QByteArray &data);
 };
