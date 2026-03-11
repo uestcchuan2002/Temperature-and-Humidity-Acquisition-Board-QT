@@ -291,9 +291,6 @@ bool TcpWorker::waitAck(int timeout)
 
 }
 
-
-
-
 quint16 TcpWorker::crc16_modbus(const QByteArray &data)
 {
     quint16 crc = 0xFFFF;

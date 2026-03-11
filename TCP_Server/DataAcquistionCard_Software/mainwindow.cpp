@@ -2,22 +2,22 @@
 #include "ui_mainwindow.h"
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent)
-    , ui(new Ui::MainWindow)
+    : QMainWindow(parent), ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
 
+    // 初始化 TCP 线程与 Worker
     tcpThread = new QThread;
     tcpWorker = new TcpWorker;
     tcpWorker->moveToThread(tcpThread);
     tcpThread->start();
 
     // 1. 隐藏原生标题栏（必须）
-    this->setWindowFlags(Qt::FramelessWindowHint); // 隐藏原生标题栏
+    this->setWindowFlags(Qt::FramelessWindowHint);
     this->setAttribute(Qt::WA_TranslucentBackground, false); // 关闭透明（可选）
 
     // 2. 创建自定义标题栏
-    // 可自定义参数：高度50px，背景色深蓝色，文字白色，按钮悬浮浅蓝
+    // 参数：高度50px，背景色深蓝色，文字白色，按钮悬浮浅蓝
     createCustomTitleBar(50, "#323C4D", "#ffffff", "#4080FF", "多路温湿度采集板卡上位机软件", "#323C4D", 5);
 
     // 3. 设置界面大小
@@ -30,226 +30,184 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    // 退出线程处理
+    tcpThread->quit();
+    tcpThread->wait();
+    delete tcpWorker;
+    delete tcpThread;
     delete ui;
 }
 
-// 初始化界面内容区
+// 初始化界面内容区域
 void MainWindow::initContentArea(void)
 {
-    // 1.清空原有界面格式
-    if (ui->centralwidget->layout() != nullptr) {
+    // 1. 清空原有界面格式
+    if (ui->centralwidget->layout() != nullptr)
+    {
         delete ui->centralwidget->layout();
     }
 
-    // 2.创建内容区主容器
+    // 2. 创建内容区主容器
     contentContainer = new QWidget(ui->centralwidget);
     contentContainer->setStyleSheet(R"(
-                                    QWidget {
-                                    background-color: #475776; /* 内容区背景色 */
-                                    border: none;
-                                    }
-                                    )"
-                                    );
+        QWidget {
+            background-color: #475776; /* 内容区背景色 */
+            border: none;
+        }
+    )");
 
-    // 3. 给原centralwidget设置垂直布局（作为内容区的根布局）
+    // 3. 给原 centralwidget 设置垂直布局（作为内容区的根布局）
     QVBoxLayout *contentRootLayout = new QVBoxLayout(ui->centralwidget);
     contentRootLayout->setContentsMargins(10, 10, 10, 10); // 内容区内边距
-    contentRootLayout->setSpacing(15); // 控件间距
-    contentRootLayout->addWidget(contentContainer); // 将自定义容器加入布局
+    contentRootLayout->setSpacing(10);                     // 控件间距
+    contentRootLayout->addWidget(contentContainer);
 
-    // 3.1 给自定义容器设置子布局（示例：水平布局，可换成QVBoxLayout）
+    // 整体为垂直布局
     QVBoxLayout *containerLayout = new QVBoxLayout(contentContainer);
-    containerLayout->setContentsMargins(0, 0, 0, 0);
-    containerLayout->setSpacing(20);
+    containerLayout->setContentsMargins(10, 10, 10, 10);
+    containerLayout->setSpacing(0);
 
-    // 4.1-子容器1：TCP连接区域
+    // 第一行：控制区域 --> 横向分布
+    contolArea = new QWidget(contentContainer);
+    contolArea->setMaximumHeight(230);
+
+    QHBoxLayout *contolAreaLayout = new QHBoxLayout(contolArea);
+    contolAreaLayout->setContentsMargins(10, 10, 10, 5);
+    contolAreaLayout->setSpacing(20);
+
+    tcpConnectWindow();
+    firmwareUpdateWindow();
+
+    contolAreaLayout->addWidget(tcpConnectControlArea, 0, Qt::AlignTop);
+    contolAreaLayout->addWidget(firmwareUpdateWidget, 0, Qt::AlignTop);
+
+    // 第二行：采集参数与数据显示区域 --> 横向布局
+    parameterAndSensorArea = new QWidget(contentContainer);
+
+    QHBoxLayout *parameterAndSensorAreaLayout = new QHBoxLayout(parameterAndSensorArea);
+    parameterAndSensorAreaLayout->setContentsMargins(10, 5, 10, 10);
+    parameterAndSensorAreaLayout->setSpacing(10);
+
+    parametersWindow();
+    sensorDataPreventWindow();
+
+    parameterAndSensorAreaLayout->addWidget(parametersWidget, 0, Qt::AlignTop);
+    parameterAndSensorAreaLayout->addWidget(sensorDataPreventWidget, 0, Qt::AlignTop);
+
+    //******************************************************
+    containerLayout->addWidget(contolArea);
+    containerLayout->addWidget(parameterAndSensorArea);
+    containerLayout->addStretch();
+}
+
+void MainWindow::tcpConnectWindow()
+{
+    // 1. 容器整体样式：固定高度，增加浅色边框增强层次感
     tcpConnectControlArea = new QWidget(contentContainer);
-    tcpConnectControlArea->setMaximumHeight(400);
+    tcpConnectControlArea->setFixedHeight(120); // 压缩高度，消除空白感
     tcpConnectControlArea->setStyleSheet(R"(
-                                    QWidget {
-                                    background-color: #ffffff; /* 内容区背景色 */
-                                    border: none;
-                                    border-radius: 4px;
-                                    }
-                                    )"
-                                    );
-    // 4.2-IP/端口配置行布局（核心）
-    QHBoxLayout *configLayout = new QHBoxLayout(tcpConnectControlArea);
-    configLayout->setContentsMargins(30, 30, 30, 30);
-    configLayout->setSpacing(20); // 控件之间的间距
+        QWidget {
+            background-color: #FFFFFF;
+            border: 1px solid #DCDFE6;
+            border-radius: 6px;
+        }
+    )");
 
-    // ===== 4.3 标签 + 输入框：IP地址 =====
-    ipLabel = new QLabel("IP地址:", tcpConnectControlArea);
-    ipLabel->setStyleSheet("font-size: 16px; color: #333333;");
-    ipLabel->setFixedWidth(80); // 固定标签宽度，对齐更整齐
-    ipLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter); // 文字右对齐
+    // 2. 主垂直布局：设置紧凑的边距和间距
+    QVBoxLayout *tcpLayout = new QVBoxLayout(tcpConnectControlArea);
+    tcpLayout->setContentsMargins(20, 15, 20, 15);
+    tcpLayout->setSpacing(12);
 
-    ipEdit = new QLineEdit(tcpConnectControlArea);
-    ipEdit->setPlaceholderText("请输入IP地址");
-    ipEdit->setText("192.168.1.30"); // 默认值
-    ipEdit->setFixedWidth(150); // 固定输入框宽度
-    ipEdit->setStyleSheet(R"(
-                          QLineEdit {
-                          border: 1px solid #DCDFE6;
-                          border-radius: 4px;
-                          padding: 8px 12px;
-                          font-size: 16px;
-                          color: #333333;
-                          background-color: #FFFFFF;
-                          }
-                          QLineEdit:focus {
-                          border-color: #4080FF;
-                          outline: none;
-                          }
-                          )");
+    // --- 第一行：网络配置参数 ---
+    QWidget *row1 = new QWidget(tcpConnectControlArea);
+    row1->setStyleSheet("border: none;");
+    QHBoxLayout *layout1 = new QHBoxLayout(row1);
+    layout1->setContentsMargins(0, 0, 0, 0);
+    layout1->setSpacing(10);
 
-    // ===== 4.4 标签 + 输入框：端口 =====
-    portLabel = new QLabel("端口:", tcpConnectControlArea);
-    portLabel->setStyleSheet("font-size: 16px; color: #333333;");
-    portLabel->setFixedWidth(80);
-    portLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    // 统一输入框样式
+    QString editStyle = R"(
+        QLineEdit {
+            border: 1px solid #DCDFE6;
+            border-radius: 4px;
+            padding: 5px 10px;
+            font-size: 14px;
+            background-color: #F5F7FA;
+        }
+        QLineEdit:focus { border-color: #4080FF; background-color: #FFFFFF; }
+    )";
 
-    portEdit = new QLineEdit(tcpConnectControlArea);
-    portEdit->setPlaceholderText("请输入端口号");
-    portEdit->setText("8080"); // 默认值
-    portEdit->setFixedWidth(120);
-    portEdit->setStyleSheet(R"(
-                            QLineEdit {
-                            border: 1px solid #DCDFE6;
-                            border-radius: 4px;
-                            padding: 8px 12px;
-                            font-size: 16px;
-                            color: #333333;
-                            background-color: #FFFFFF;
-                            }
-                            QLineEdit:focus {
-                            border-color: #4080FF;
-                            outline: none;
-                            }
-                            )");
+    ipLabel = new QLabel("IP地址:", row1);
+    ipLabel->setFixedWidth(50);
+    ipEdit = new QLineEdit("192.168.1.30", row1);
+    ipEdit->setFixedWidth(130);
+    ipEdit->setStyleSheet(editStyle);
 
-    /* 限制只能输入 0 到 65535 之间的整数 */
-    QIntValidator *validator = new QIntValidator(0, 65535, this);
-    portEdit->setValidator(validator);
+    portLabel = new QLabel("端口:", row1);
+    portLabel->setFixedWidth(40);
+    portEdit = new QLineEdit("8080", row1);
+    portEdit->setFixedWidth(70);
+    portEdit->setStyleSheet(editStyle);
+    portEdit->setValidator(new QIntValidator(0, 65535, this));
 
-    // ===== 4.5 按钮：连接 =====
-    connectBtn = new QPushButton("连接", tcpConnectControlArea);
-    connectBtn->setFixedSize(100, 40); // 固定按钮大小
+    connectBtn = new QPushButton("连接", row1);
+    connectBtn->setFixedSize(160, 32);
     connectBtn->setStyleSheet(R"(
-                              QPushButton {
-                              border: none;
-                              border-radius: 4px;
-                              background-color: #4080FF;
-                              color: #FFFFFF;
-                              font-size: 16px;
-                              }
-                              QPushButton:hover {
-                              background-color: #6699FF;
-                              }
-                              QPushButton:pressed {
-                              background-color: #3373DD;
-                              }
-                              QPushButton:disabled {
-                              background-color: #BBBBBB;
-                              }
-                              )");
+        QPushButton { background-color: #409EFF; color: white; border-radius: 4px; font-weight: bold; border:none; }
+        QPushButton:hover { background-color: #66B1FF; }
+        QPushButton:pressed { background-color: #3A8EE6; }
+        QPushButton:disabled { background-color: #C0C4CC; }
+    )");
 
-    // ===== 4.6 按钮：断开 =====
-    disconnectBtn = new QPushButton("断开", tcpConnectControlArea);
-    disconnectBtn->setFixedSize(100, 40);
+    disconnectBtn = new QPushButton("断开", row1);
+    disconnectBtn->setFixedSize(160, 32);
+    disconnectBtn->setEnabled(false);
     disconnectBtn->setStyleSheet(R"(
-                                 QPushButton {
-                                 border: 1px solid #DCDFE6;
-                                 border-radius: 4px;
-                                 background-color: #FFFFFF;
-                                 color: #333333;
-                                 font-size: 16px;
-                                 }
-                                 QPushButton:hover {
-                                 border-color: #C0C4CC;
-                                 background-color: #F5F5F5;
-                                 }
-                                 QPushButton:pressed {
-                                 background-color: #E6E6E6;
-                                 }
-                                 QPushButton:disabled {
-                                 color: #999999;
-                                 background-color: #F5F5F5;
-                                 }
-                                 )");
-    disconnectBtn->setEnabled(false); // 默认禁用“断开”按钮
+        QPushButton { background-color: #FFFFFF; color: #F56C6C; border: 1px solid #F56C6C; border-radius: 4px; }
+        QPushButton:hover { background-color: #FEF0F0; }
+        QPushButton:pressed { background-color: #FBC4C4; }
+    )");
 
-    /* 4.7 TCP连接状态显示 */
-    tcpConncetState = new QLabel(tcpConnectControlArea);
-    tcpConncetState->setText("采集板卡：断开连接");
-    tcpConncetState->setStyleSheet("font-size: 16px; color: #333333;");
-    tcpConncetState->setFixedWidth(180);
-    tcpConncetState->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    tcpConncetState = new QLabel("● 断开连接", row1);
+    tcpConncetState->setStyleSheet("color: #909399; font-weight: bold; margin-left: 10px;");
 
-    /* 4.8 文本浏览框 */
-    textBrowser = new QTextBrowser(tcpConnectControlArea);
-    textBrowser->setStyleSheet("font-size: 16px; color: #333333;");
-    textBrowser->setFixedWidth(380);
-    textBrowser->setFixedHeight(200);
-    textBrowser->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    textBrowser->setStyleSheet(QString(R"(
-                                         QWidget {
-                                         border: 4px solid #000000; /* 边框宽度 + 颜色 */
-                                         border-radius: 1px; /* 可选：窗口圆角 */
-                                         background-color: #ffffff; /* 窗口内容区背景色 */
-                                         }
-                                         )"));
+    layout1->addWidget(ipLabel);
+    layout1->addWidget(ipEdit);
+    layout1->addWidget(portLabel);
+    layout1->addWidget(portEdit);
+    layout1->addSpacing(10);
+    layout1->addWidget(connectBtn);
+    layout1->addWidget(disconnectBtn);
+    layout1->addStretch();
+    layout1->addWidget(tcpConncetState);
 
-    // 发送文本框
-    lineEdit = new QLineEdit(tcpConnectControlArea);
-    lineEdit->setFixedWidth(280);
-    lineEdit->setFixedHeight(50);
-    lineEdit->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    lineEdit->setStyleSheet(QString(R"(
-                                         QWidget {
-                                         border: 4px solid #000000; /* 边框宽度 + 颜色 */
-                                         border-radius: 1px; /* 可选：窗口圆角 */
-                                         background-color: #ffffff; /* 窗口内容区背景色 */
-                                         }
-                                         )"));
+    // --- 第二行：指令发送区域 ---
+    QWidget *row2 = new QWidget(tcpConnectControlArea);
+    row2->setStyleSheet("border: none;");
+    QHBoxLayout *layout2 = new QHBoxLayout(row2);
+    layout2->setContentsMargins(0, 0, 0, 0);
+    layout2->setSpacing(10);
 
-    // 发送消息按键
-    messageSendBtn = new QPushButton("发送",tcpConnectControlArea);
-    messageSendBtn->setFixedSize(100, 40);
+    lineEdit = new QLineEdit(row2);
+    lineEdit->setPlaceholderText("在此输入待发送的 16 进制或字符串指令...");
+    lineEdit->setFixedHeight(35);
+    lineEdit->setStyleSheet(editStyle);
+
+    messageSendBtn = new QPushButton("发送数据", row2);
+    messageSendBtn->setFixedSize(100, 35);
     messageSendBtn->setStyleSheet(R"(
-                              QPushButton {
-                              border: none;
-                              border-radius: 4px;
-                              background-color: #4080FF;
-                              color: #FFFFFF;
-                              font-size: 16px;
-                              }
-                              QPushButton:hover {
-                              background-color: #6699FF;
-                              }
-                              QPushButton:pressed {
-                              background-color: #3373DD;
-                              }
-                              QPushButton:disabled {
-                              background-color: #BBBBBB;
-                              }
-                              )");
-    // ===== 4.9 将控件添加到布局 =====
-    configLayout->addWidget(ipLabel);
-    configLayout->addWidget(ipEdit);
-    configLayout->addWidget(portLabel);
-    configLayout->addWidget(portEdit);
-    configLayout->addSpacing(40); // 增加空白间距，分隔输入框和按钮
-    configLayout->addWidget(connectBtn);
-    configLayout->addWidget(disconnectBtn);
-    configLayout->addSpacing(20);
-    configLayout->addWidget(tcpConncetState);
-    configLayout->addWidget(textBrowser);
-    configLayout->addWidget(lineEdit);
-    configLayout->addWidget(messageSendBtn);
-    configLayout->addStretch(); // 右侧拉伸空白，让控件靠左对齐
+        QPushButton { background-color: #67C23A; color: white; border-radius: 4px; font-weight: bold; border:none; }
+        QPushButton:hover { background-color: #85CE61; }
+    )");
 
-    /* TCP连接与断开信号与槽函数 */
+    layout2->addWidget(lineEdit);
+    layout2->addWidget(messageSendBtn);
+
+    // 3. 将行装入主容器布局
+    tcpLayout->addWidget(row1);
+    tcpLayout->addWidget(row2);
+
+    // 4. 信号槽绑定
     connect(connectBtn, &QPushButton::clicked, this, &MainWindow::toConnect);
     connect(disconnectBtn, &QPushButton::clicked, this, &MainWindow::toDisConnect);
     connect(messageSendBtn, &QPushButton::clicked, this, &MainWindow::sendMessages);
@@ -257,195 +215,538 @@ void MainWindow::initContentArea(void)
     connect(this, &MainWindow::sigConnect, tcpWorker, &TcpWorker::connectToHost);
     connect(this, &MainWindow::sigSend, tcpWorker, &TcpWorker::sendData);
     connect(this, &MainWindow::sigDisconnect, tcpWorker, &TcpWorker::disconnectFromHost);
-    connect(this, &MainWindow::sigUpdate, tcpWorker, &TcpWorker::startUpgrade);
 
-    connect(tcpWorker,  &TcpWorker::sigConnected, this, &MainWindow::connected);
-    connect(tcpWorker,  &TcpWorker::sigDisconnected, this, &MainWindow::disconnected);
-    connect(tcpWorker,  &TcpWorker::sigRecv, this, &MainWindow::receiveMessages);
-    connect(tcpWorker,  &TcpWorker::updateUpgradeProgress, this, &MainWindow::onUpgradeProgress);
-    connect(tcpWorker,  &TcpWorker::updateUpgradeStatus, this, &MainWindow::onUpgradeStatus);
-    // 5. ota升级模块设计
+    connect(tcpWorker, &TcpWorker::sigConnected, this, &MainWindow::connected);
+    connect(tcpWorker, &TcpWorker::sigDisconnected, this, &MainWindow::disconnected);
+    connect(tcpWorker, &TcpWorker::sigRecv, this, &MainWindow::receiveMessages);
+}
+
+void MainWindow::firmwareUpdateWindow()
+{
+    // 1. 容器整体样式：与 TCP 控制框保持完全一致
     firmwareUpdateWidget = new QWidget(contentContainer);
-    firmwareUpdateWidget->setMaximumHeight(200);
-    firmwareUpdateWidget->setStyleSheet(
-                    R"(QWidget{
-                    background-color: #ffffff;
-                    border: none;
-                    border-radius: 4px;
-                    })"
-                );
+    firmwareUpdateWidget->setFixedHeight(120); // 固定高度，消除空白感
+    firmwareUpdateWidget->setStyleSheet(R"(
+        QWidget {
+            background-color: #FFFFFF;
+            border: 1px solid #DCDFE6;
+            border-radius: 6px;
+        }
+    )");
 
-    // ========== 关键修复：给OTA模块添加布局 ==========
-    // 改为垂直布局，先放原有控件行，再放进度条行
+    // 2. 主垂直布局：设置紧凑边距
     QVBoxLayout *otaMainLayout = new QVBoxLayout(firmwareUpdateWidget);
-    otaMainLayout->setContentsMargins(30, 30, 30, 30);
-    otaMainLayout->setSpacing(15);
+    otaMainLayout->setContentsMargins(20, 15, 20, 15);
+    otaMainLayout->setSpacing(12);
 
-    // 第一行：原有控件的水平布局
+    // 统一输入框与按钮的基础样式
+    QString editStyle = R"(
+        QLineEdit {
+            border: 1px solid #DCDFE6;
+            border-radius: 4px;
+            padding: 5px 10px;
+            font-size: 14px;
+            background-color: #F5F7FA;
+            color: #333333;
+        }
+        QLineEdit:focus { border-color: #4080FF; background-color: #FFFFFF; }
+    )";
+
+    // --- 第一行：文件选择与操作 ---
     QHBoxLayout *otaTopLayout = new QHBoxLayout();
-    otaTopLayout->setSpacing(20);
+    otaTopLayout->setSpacing(10);
 
-    // OTA控件1：标签
-    otaLabel = new QLabel("OTA固件升级:", firmwareUpdateWidget);
-    otaLabel->setStyleSheet("font-size: 16px; color: #333333;");
-    otaLabel->setFixedWidth(100);
-    otaLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    otaLabel = new QLabel("固件升级:", firmwareUpdateWidget);
+    otaLabel->setFixedWidth(70); // 与进度条标签对齐
+    otaLabel->setStyleSheet("font-size: 14px; color: #606266; font-weight: bold; border:none;");
 
-    // OTA控件2：固件文件选择按钮
-    selectFileBtn = new QPushButton("选择固件", firmwareUpdateWidget);
-    selectFileBtn->setFixedSize(120, 40);
+    selectFileBtn = new QPushButton("选择文件", firmwareUpdateWidget);
+    selectFileBtn->setFixedSize(80, 32);
     selectFileBtn->setStyleSheet(R"(
-                              QPushButton {
-                              border: 1px solid #DCDFE6;
-                              border-radius: 4px;
-                              background-color: #FFFFFF;
-                              color: #333333;
-                              font-size: 16px;
-                              }
-                              QPushButton:hover {
-                              border-color: #4080FF;
-                              }
-                              )");
+        QPushButton { background-color: #FFFFFF; border: 1px solid #DCDFE6; border-radius: 4px; color: #606266; }
+        QPushButton:hover { border-color: #4080FF; color: #4080FF; }
+    )");
 
-    // OTA控件3：固件路径显示
     firmwarePathEdit = new QLineEdit(firmwareUpdateWidget);
-    firmwarePathEdit->setPlaceholderText("未选择固件文件");
-    firmwarePathEdit->setFixedWidth(300);
-    firmwarePathEdit->setStyleSheet(R"(
-                          QLineEdit {
-                          border: 1px solid #DCDFE6;
-                          border-radius: 4px;
-                          padding: 8px 12px;
-                          font-size: 16px;
-                          color: #333333;
-                          background-color: #FFFFFF;
-                          }
-                          )");
-    firmwarePathEdit->setReadOnly(true); // 只读，防止手动修改
+    firmwarePathEdit->setPlaceholderText("未选择固件路径...");
+    firmwarePathEdit->setReadOnly(true);
+    firmwarePathEdit->setMinimumWidth(500);
+    firmwarePathEdit->setFixedHeight(35);
+    firmwarePathEdit->setStyleSheet(editStyle);
 
-    // OTA控件4：升级按钮
     updateBtn = new QPushButton("开始升级", firmwareUpdateWidget);
-    updateBtn->setFixedSize(120, 40);
+    updateBtn->setFixedSize(90, 32);
+    updateBtn->setEnabled(false);
     updateBtn->setStyleSheet(R"(
-                              QPushButton {
-                              border: none;
-                              border-radius: 4px;
-                              background-color: #4080FF;
-                              color: #FFFFFF;
-                              font-size: 16px;
-                              }
-                              QPushButton:hover {
-                              background-color: #6699FF;
-                              }
-                              QPushButton:pressed {
-                              background-color: #3373DD;
-                              }
-                              QPushButton:disabled {
-                              background-color: #BBBBBB;
-                              }
-                              )");
-    updateBtn->setEnabled(false); // 默认禁用，选择固件后再启用
+        QPushButton { background-color: #4080FF; color: white; border-radius: 4px; font-weight: bold; border:none; }
+        QPushButton:hover { background-color: #66B1FF; }
+        QPushButton:disabled { background-color: #C0C4CC; }
+    )");
 
-    // OTA控件5：升级状态
-    updateStateLabel = new QLabel("升级状态：未开始", firmwareUpdateWidget);
-    updateStateLabel->setStyleSheet("font-size: 16px; color: #333333;");
-    updateStateLabel->setFixedWidth(180);
-    updateStateLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    updateStateLabel = new QLabel("等待中", firmwareUpdateWidget);
+    updateStateLabel->setFixedWidth(120);
+    updateStateLabel->setStyleSheet("color: #909399; font-size: 13px; font-weight: bold; border:none; margin-left:5px;");
 
-    // 将原有控件添加到顶部水平布局
     otaTopLayout->addWidget(otaLabel);
     otaTopLayout->addWidget(selectFileBtn);
     otaTopLayout->addWidget(firmwarePathEdit);
     otaTopLayout->addWidget(updateBtn);
-    otaTopLayout->addWidget(updateStateLabel);
     otaTopLayout->addStretch();
+    otaTopLayout->addWidget(updateStateLabel);
 
-    // 第二行：进度条控件
+    // --- 第二行：进度条展示 ---
     QHBoxLayout *otaProgressLayout = new QHBoxLayout();
     otaProgressLayout->setSpacing(10);
 
-    // 进度条标签
-    QLabel *progressLabel = new QLabel("升级进度：", firmwareUpdateWidget);
-    progressLabel->setStyleSheet("font-size: 16px; color: #333333;");
-    progressLabel->setFixedWidth(100);
-    progressLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    QLabel *progressLabel = new QLabel("升级进度:", firmwareUpdateWidget);
+    progressLabel->setFixedWidth(70);
+    progressLabel->setStyleSheet("font-size: 14px; color: #606266; font-weight: bold; border:none;");
 
-    // 升级进度条（核心新增控件）
     updateProgressBar = new QProgressBar(firmwareUpdateWidget);
-    updateProgressBar->setFixedHeight(30);
-    updateProgressBar->setFixedWidth(600); // 进度条宽度
-    // 进度条样式美化
+    updateProgressBar->setFixedHeight(25); // 更加纤细现代
+    updateProgressBar->setRange(0, 100);
+    updateProgressBar->setValue(0);
+    updateProgressBar->setTextVisible(true);
+    updateProgressBar->setAlignment(Qt::AlignCenter);
     updateProgressBar->setStyleSheet(R"(
-                              QProgressBar {
-                              border: 1px solid #DCDFE6;
-                              border-radius: 4px;
-                              background-color: #F5F7FA;
-                              text-align: center;
-                              font-size: 14px;
-                              color: #333333;
-                              }
-                              QProgressBar::chunk {
-                              border-radius: 3px;
-                              background-color: #4080FF;
-                              }
-                              )");
-    updateProgressBar->setRange(0, 100); // 进度范围0-100%
-    updateProgressBar->setValue(0); // 初始进度0%
+        QProgressBar {
+            border: none;
+            background-color: #EBEEF5;
+            border-radius: 9px;
+            text-align: center;
+            color: #333333;
+            font-size: 11px;
+        }
+        QProgressBar::chunk {
+            background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4080FF, stop:1 #6699FF);
+            border-radius: 9px;
+        }
+    )");
 
-
-    // 将进度条控件添加到进度布局
     otaProgressLayout->addWidget(progressLabel);
     otaProgressLayout->addWidget(updateProgressBar);
-    otaProgressLayout->addStretch();
 
-    // 将顶部布局和进度布局添加到主垂直布局
+    // 3. 将行装入主布局
     otaMainLayout->addLayout(otaTopLayout);
     otaMainLayout->addLayout(otaProgressLayout);
 
+    // 4. 信号槽逻辑
     connect(selectFileBtn, &QPushButton::clicked, this, [=]() {
-
-        QString filePath = QFileDialog::getOpenFileName(
-                    this,
-                    "选择固件文件",
-                    "",
-                    "Bin文件 (*.bin);;Hex文件 (*.hex);;所有文件 (*.*)");
-
-        if (filePath.isEmpty())
-            return;
+        QString filePath = QFileDialog::getOpenFileName(this, "选择固件", "", "Bin (*.bin);;All (*.*)");
+        if (filePath.isEmpty()) return;
 
         QFile file(filePath);
-        if (!file.open(QIODevice::ReadOnly)) {
-            QMessageBox::warning(this, "错误", "无法打开固件文件！");
-            return;
+        if (file.open(QIODevice::ReadOnly)) {
+            m_firmwareData = file.readAll();
+            file.close();
+            if (!m_firmwareData.isEmpty()) {
+                m_firmwarePath = filePath;
+                firmwarePathEdit->setText(filePath);
+                updateBtn->setEnabled(true);
+                updateStateLabel->setText("就绪");
+                updateStateLabel->setStyleSheet("color: #67C23A; font-weight: bold; border:none;"); // 变绿
+            }
         }
-
-        // 读取全部数据
-        m_firmwareData = file.readAll();
-        file.close();
-
-        if (m_firmwareData.isEmpty()) {
-            QMessageBox::warning(this, "错误", "固件文件为空！");
-            return;
-        }
-
-        // 保存路径
-        m_firmwarePath = filePath;
-
-        // 更新UI
-        firmwarePathEdit->setText(filePath);
-        updateBtn->setEnabled(true);
-        updateProgressBar->setValue(0);
-        updateStateLabel->setText("升级状态：未开始");
-
     });
 
-    connect(updateBtn, &QPushButton::clicked,
-            this, &MainWindow::startUpgrade);
+    connect(updateBtn, &QPushButton::clicked, this, &MainWindow::startUpgrade);
+}
 
-    // 6. 将子容器添加到主容器的布局中
-    contentRootLayout->addWidget(tcpConnectControlArea);
-    contentRootLayout->addWidget(firmwareUpdateWidget);
-    contentRootLayout->addStretch();
+void MainWindow::parametersWindow()
+{
+    parametersWidget = new QWidget(contentContainer);
+    parametersWidget->setMaximumWidth(250);
+    parametersWidget->setStyleSheet(R"(
+                                    QWidget {
+                                    background-color: #FFFFFF;
+                                    border: 1px solid #DCDFE6;
+                                    border-radius: 6px;
+                                    }
+                                    )");
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(parametersWidget);
+    mainLayout->setContentsMargins(15, 15, 15, 15);
+    mainLayout->setSpacing(10);
+
+    // 1. 标题部分
+    sensorOpenLabel = new QLabel("传感器通讯开关:", parametersWidget);
+    sensorOpenLabel->setStyleSheet("font-size: 18px; color: #333333; font-weight: bold; border:none;");
+    mainLayout->addWidget(sensorOpenLabel);
+
+    // 2. 创建网格容器
+    QWidget *gridContainer = new QWidget(parametersWidget);
+    gridContainer->setStyleSheet("border:none;");
+    QGridLayout *gridLayout = new QGridLayout(gridContainer);
+    gridLayout->setSpacing(15); // 控制开关之间的间距
+    gridLayout->setContentsMargins(5, 5, 5, 5);
+
+    // 统一复选框样式（美化为类似开关的勾选效果）
+    QString checkStyle = R"(
+                         QCheckBox {
+                         font-size: 14px;
+                         color: #606266;
+                         spacing: 8px;
+                         border: none;
+                         }
+                         QCheckBox::indicator {
+                         width: 18px;
+                         height: 18px;
+                         border: 1px solid #DCDFE6;
+                         border-radius: 3px;
+                         }
+                         QCheckBox::indicator:unchecked { background-color: #FFFFFF; }
+                         QCheckBox::indicator:checked { background-color: #4080FF; image: url(:/new/res/res/check.png); border-color: #4080FF; }
+                         QCheckBox::indicator:hover { border-color: #4080FF; }
+                         )";
+
+    // 3. 循环生成 16 路开关
+    for (int i = 0; i < 16; ++i) {
+        // 创建开关，编号从 1 开始
+        sensorCheckBoxes[i] = new QCheckBox(QString("通道 %1").arg(i + 1), gridContainer);
+        sensorCheckBoxes[i]->setStyleSheet(checkStyle);
+        sensorCheckBoxes[i]->setCursor(Qt::PointingHandCursor);
+        gridLayout->addWidget(sensorCheckBoxes[i], i / 2, i % 2);   // 计算网格位置：每行 2 个，共 8 行
+    }
+    mainLayout->addWidget(gridContainer);
+
+    line = new QFrame(parametersWidget);
+    line->setFrameShape(QFrame::HLine);
+    line->setFrameShadow(QFrame::Sunken);
+    line->setStyleSheet("background-color: #EBEEF5;");
+    mainLayout->addWidget(line);
+
+    thresholdTitle = new QLabel("环境预警阈值设置:", parametersWidget);
+    thresholdTitle->setStyleSheet("font-size: 18px; color: #333333; font-weight: bold; border:none; margin-top:5px;");
+    mainLayout->addWidget(thresholdTitle);
+
+    // 容器布局：两行设置
+    QWidget *thresholdArea = new QWidget(parametersWidget);
+    thresholdArea->setStyleSheet("border:none;");
+    QGridLayout *thresholdLayout = new QGridLayout(thresholdArea);
+    thresholdLayout->setContentsMargins(5, 5, 5, 5);
+    thresholdLayout->setSpacing(10);
+
+    // 统一输入框样式
+    QString thresholdEditStyle = R"(
+                                 QLineEdit {
+                                 border: 1px solid #DCDFE6;
+                                 border-radius: 4px;
+                                 padding: 3px 5px;
+                                 background-color: #F5F7FA;
+                                 font-size: 13px;
+                                 }
+                                 QLineEdit:focus { border-color: #4080FF; background-color: #FFFFFF; }
+                                 )";
+
+    auto createThresholdRow = [&](int row, QString name, QLineEdit* &minEdit, QLineEdit* &maxEdit) {
+        QLabel *label = new QLabel(name, thresholdArea);
+        label->setFixedWidth(60);
+
+        minEdit = new QLineEdit(thresholdArea);
+        minEdit->setPlaceholderText("下限");
+        minEdit->setFixedWidth(60);
+        minEdit->setStyleSheet(thresholdEditStyle);
+        minEdit->setValidator(new QDoubleValidator(-100, 100, 1, this)); // 限制输入数字
+
+        QLabel *waveLabel = new QLabel("~", thresholdArea);
+
+        maxEdit = new QLineEdit(thresholdArea);
+        maxEdit->setPlaceholderText("上限");
+        maxEdit->setFixedWidth(60);
+        maxEdit->setStyleSheet(thresholdEditStyle);
+        maxEdit->setValidator(new QDoubleValidator(-100, 100, 1, this));
+
+        thresholdLayout->addWidget(label, row, 0);
+        thresholdLayout->addWidget(minEdit, row, 1);
+        thresholdLayout->addWidget(waveLabel, row, 2);
+        thresholdLayout->addWidget(maxEdit, row, 3);
+        thresholdLayout->setColumnStretch(4, 1); // 占位
+    };
+
+    createThresholdRow(0, "温度阈值:", tempMinEdit, tempMaxEdit);
+    createThresholdRow(1, "湿度阈值:", humiMinEdit, humiMaxEdit);
+    mainLayout->addWidget(thresholdArea);
+
+    line1 = new QFrame(parametersWidget);
+    line1->setFrameShape(QFrame::HLine);
+    line1->setFrameShadow(QFrame::Sunken);
+    line1->setStyleSheet("background-color: #EBEEF5;");
+    mainLayout->addWidget(line1);
+
+    rateTitle = new QLabel("数据采集速率选择:", parametersWidget);
+    rateTitle->setStyleSheet("font-size: 18px; color: #333333; font-weight: bold; border:none;");
+    mainLayout->addWidget(rateTitle);
+
+    rateGroup = new QButtonGroup(this);
+    rateGroup->setExclusive(true); // 开启互斥功能
+
+    QWidget *rateArea = new QWidget(parametersWidget);
+    rateArea->setStyleSheet("border:none;");
+    QGridLayout *rateLayout = new QGridLayout(rateArea);
+    rateLayout->setContentsMargins(5, 0, 5, 0);
+    rateLayout->setSpacing(10);
+
+    QString radioStyle = R"(
+                         QRadioButton {
+                         font-size: 14px;
+                         color: #606266;
+                         spacing: 8px;
+                         }
+                         QRadioButton::indicator {
+                         width: 18px;
+                         height: 18px;
+                         }
+                         QRadioButton::indicator:unchecked {
+                         border: 1px solid #DCDFE6;
+                         border-radius: 9px;
+                         background: #FFFFFF;
+                         }
+                         QRadioButton::indicator:checked {
+                         border: 1px solid #4080FF;
+                         border-radius: 9px;
+                         background: #4080FF;
+                         image: url(:/new/res/res/radio_dot.png); /* 如果没有资源图，Qt默认也会显示圆点 */
+                         }
+                         )";
+
+    struct RateOption {
+        QString text;
+        int row;
+        int col;
+    };
+    QList<RateOption> options = {
+        {"0.5s 采样", 0, 0}, {"1.0s 采样", 0, 1},
+        {"2.0s 采样", 1, 0}, {"4.0s 采样", 1, 1}
+    };
+
+    for (int i = 0; i < options.size(); ++i) {
+        rateButtons[i] = new QRadioButton(options[i].text, rateArea);
+        rateButtons[i]->setStyleSheet(radioStyle);
+        rateGroup->addButton(rateButtons[i], i); // 加入组并分配ID
+        rateLayout->addWidget(rateButtons[i], options[i].row, options[i].col);
+    }
+
+    // 默认选中 1.0s
+    rateButtons[1]->setChecked(true);
+    mainLayout->addWidget(rateArea);
+
+
+    line2 = new QFrame(parametersWidget);
+    line2->setFrameShape(QFrame::HLine);
+    line2->setFrameShadow(QFrame::Sunken);
+    line2->setStyleSheet("background-color: #EBEEF5;");
+    mainLayout->addWidget(line2);
+
+
+
+
+    QLabel *storageTitle = new QLabel("传感器数据存储控制:", parametersWidget);
+    storageTitle->setStyleSheet("font-size: 18px; color: #333333; font-weight: bold; border:none;");
+    mainLayout->addWidget(storageTitle);
+
+    // 第二层：当前储存数据条数
+    QHBoxLayout *countLayout = new QHBoxLayout();
+    QLabel *countLabel = new QLabel("当前存储条数:", parametersWidget);
+    countLabel->setStyleSheet("font-size: 14px; color: #606266; border:none;");
+
+    dataCountEdit = new QLineEdit("0", parametersWidget);
+    dataCountEdit->setReadOnly(true);
+    dataCountEdit->setFixedWidth(120);
+    dataCountEdit->setAlignment(Qt::AlignCenter);
+    dataCountEdit->setStyleSheet(R"(
+                                 QLineEdit {
+                                 background-color: #F5F7FA;
+                                 border: 1px solid #DCDFE6;
+                                 border-radius: 4px;
+                                 color: #4080FF;
+                                 font-weight: bold;
+                                 font-size: 16px;
+                                 font-family: 'Consolas', 'Monospace';
+                                 }
+                                 )");
+    countLayout->addWidget(countLabel);
+    countLayout->addWidget(dataCountEdit);
+    countLayout->addStretch();
+    mainLayout->addLayout(countLayout);
+
+    // 第三层：开始存储与停止存储 (水平并列)
+    QHBoxLayout *storageBtnLayout = new QHBoxLayout();
+    storageBtnLayout->setSpacing(10);
+
+    startStorageBtn = new QPushButton("开始存储", parametersWidget);
+    stopStorageBtn = new QPushButton("停止存储", parametersWidget);
+
+    // 设置固定高度保持整齐
+    startStorageBtn->setFixedHeight(32);
+    stopStorageBtn->setFixedHeight(32);
+
+    // 初始状态：停止按钮被禁用或按下
+    startStorageBtn->setStyleSheet(R"(
+                                   QPushButton { background-color: #67C23A; color: white; border-radius: 4px; font-weight: bold; border:none; }
+                                   QPushButton:hover { background-color: #85CE61; }
+                                   QPushButton:disabled { background-color: #F0F9EB; color: #C2E7B0; border: 1px solid #C2E7B0; }
+                                   )");
+
+    stopStorageBtn->setStyleSheet(R"(
+                                  QPushButton { background-color: #F56C6C; color: white; border-radius: 4px; font-weight: bold; border:none; }
+                                  QPushButton:hover { background-color: #F78989; }
+                                  QPushButton:disabled { background-color: #FEF0F0; color: #FBC4C4; border: 1px solid #FBC4C4; }
+                                  )");
+
+    stopStorageBtn->setEnabled(false); // 初始默认为停止状态
+
+    storageBtnLayout->addWidget(startStorageBtn);
+    storageBtnLayout->addWidget(stopStorageBtn);
+    mainLayout->addLayout(storageBtnLayout);
+
+    exportDataBtn = new QPushButton("导出数据报告 (.csv)", parametersWidget);
+    exportDataBtn->setFixedHeight(35);
+    exportDataBtn->setStyleSheet(R"(
+                                 QPushButton {
+                                 background-color: #E6A23C;
+                                 color: white;
+                                 border-radius: 4px;
+                                 font-size: 14px;
+                                 font-weight: bold;
+                                 border:none;
+                                 }
+                                 QPushButton:hover { background-color: #EBB563; }
+                                 QPushButton:pressed { background-color: #CF9236; }
+                                 )");
+    mainLayout->addWidget(exportDataBtn);
+
+    mainLayout->addSpacing(10);
+    line3 = new QFrame(parametersWidget);
+    line3->setFrameShape(QFrame::HLine);
+    line3->setFrameShadow(QFrame::Sunken);
+    line3->setStyleSheet("background-color: #EBEEF5;");
+    mainLayout->addWidget(line3);
+    thresholdConfirmBtn = new QPushButton("应用阈值配置", parametersWidget);
+    thresholdConfirmBtn->setFixedHeight(35);
+    thresholdConfirmBtn->setStyleSheet(R"(
+                                       QPushButton {
+                                       background-color: #4080FF;
+                                       color: white;
+                                       border-radius: 4px;
+                                       font-size: 14px;
+                                       font-weight: bold;
+                                       }
+                                       QPushButton:hover { background-color: #66B1FF; }
+                                       QPushButton:pressed { background-color: #3A8EE6; }
+                                       )");
+    mainLayout->addWidget(thresholdConfirmBtn);
+    mainLayout->addStretch(); // 将所有控件往上挤，避免下方留白不均匀
+}
+
+void MainWindow::sensorDataPreventWindow()
+{
+    sensorDataPreventWidget = new QWidget(contentContainer);
+    // 8列布局需要较宽的容器，设为 600px 左右比较合适
+    sensorDataPreventWidget->setMinimumWidth(600);
+    sensorDataPreventWidget->setStyleSheet(R"(
+        QWidget {
+            background-color: #FFFFFF;
+            border: 1px solid #DCDFE6;
+            border-radius: 6px;
+        }
+    )");
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(sensorDataPreventWidget);
+    mainLayout->setContentsMargins(10, 10, 10, 10);
+    mainLayout->setSpacing(8);
+
+    titleLabel = new QLabel("实时环境监测数据 (16路)", sensorDataPreventWidget);
+    titleLabel->setStyleSheet("font-size: 18px; color: #333333; font-weight: bold; border:none;");
+    titleLabel->setAlignment(Qt::AlignLeft);
+    mainLayout->addWidget(titleLabel);
+
+    dataGridContainer = new QWidget(sensorDataPreventWidget);
+    dataGridContainer->setStyleSheet("border:none;");
+    QGridLayout *gridLayout = new QGridLayout(dataGridContainer);
+    // 关键：大幅缩小间距使布局紧凑
+    gridLayout->setSpacing(4);
+    gridLayout->setContentsMargins(0, 0, 0, 0);
+
+    QString cellStyle = R"(
+        QLabel {
+            border: 1px solid #EBEEF5;
+            border-radius: 2px;
+            background-color: #FDFDFD;
+        }
+    )";
+
+    for (int i = 0; i < 16; ++i) {
+        // 1. 创建超扁平单元格
+        // 宽度 70px，高度 28px
+        QLabel *dataCell = new QLabel(dataGridContainer);
+        dataCell->setFixedSize(170, 38);
+        dataCell->setStyleSheet(cellStyle);
+        dataCell->setAlignment(Qt::AlignCenter);
+
+        // 2. 优化 HTML 结构：去除 padding 确保不换行
+        QString initialText = QString(
+            "<table width='100%' cellpadding='0' cellspacing='0' style='border:none;'>"
+            "<tr>"
+            "<td align='center' style='color:#909399; font-weight:bold; font-size:18px;'>%1</td>"
+            "<td align='center' style='color:#E6A23C; font-size:18px;'>--℃</td>"
+            "<td align='center' style='color:#409EFF; font-size:18px;'>--%</td>"
+            "</tr>"
+            "</table>"
+        ).arg(i + 1, 2, 10, QChar('0'));
+
+        dataCell->setText(initialText);
+        sensorDataLabels[i] = dataCell;
+
+        // 3. 计算行列：每行 8 个
+        int row = i / 8; // 前8个在第0行，后8个在第1行
+        int col = i % 8; // 0-7 循环
+        gridLayout->addWidget(dataCell, row, col);
+    }
+
+    mainLayout->addWidget(dataGridContainer);
+
+    line4 = new QFrame(parametersWidget);
+    line4->setFrameShape(QFrame::HLine);
+    line4->setFrameShadow(QFrame::Sunken);
+    line4->setStyleSheet("background-color: #EBEEF5;");
+    mainLayout->addWidget(line4);
+
+    QWidget *chartHeader = new QWidget(sensorDataPreventWidget);
+    chartHeader->setStyleSheet("border:none;");
+    QHBoxLayout *headerLayout = new QHBoxLayout(chartHeader);
+    headerLayout->setContentsMargins(0, 0, 0, 0);
+
+    QLabel *chartTitle = new QLabel("传感器实时数据波形 (趋势图)", chartHeader);
+    chartTitle->setStyleSheet("font-size: 18px; color: #333333; font-weight: bold; border:none;");
+
+    QComboBox *chartChannelSelect = new QComboBox(chartHeader);
+    for(int i=1; i<=16; ++i) chartChannelSelect->addItem(QString("查看通道 %1").arg(i, 2, 10, QChar('0')));
+    chartChannelSelect->setFixedWidth(120);
+    chartChannelSelect->setStyleSheet(R"(
+                                      QComboBox { border: 1px solid #DCDFE6; border-radius: 4px; padding: 2px 5px; background: #F5F7FA; }
+                                      )");
+
+    headerLayout->addWidget(chartTitle);
+    headerLayout->addStretch();
+    headerLayout->addWidget(chartChannelSelect);
+    mainLayout->addWidget(chartHeader);
+
+    mainLayout->addStretch();
+
+    QWidget *customPlot = new QWidget(sensorDataPreventWidget);
+    customPlot->setMinimumHeight(600); // 给波形图足够的垂直空间
+    customPlot->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    customPlot->setStyleSheet(R"(
+                              QWidget {
+                              background-color: #1E1E1E; /* 黑色背景更有科技感 */
+                              border: 1px solid #333333;
+                              border-radius: 4px;
+                              }
+                              )");
+    mainLayout->addWidget(customPlot);
+
+    // 移除 Stretch，让数据显示在顶部；或者保留以适应大窗口
+
 }
 
 void MainWindow::toConnect()
@@ -477,27 +778,21 @@ void MainWindow::disconnected()
 
 void MainWindow::receiveMessages(QString messages)
 {
-    // 1. 转换为UTF-8字节数组
+    // 转换并格式化为 16 进制显示
     QByteArray byteData = messages.toUtf8();
-
-    // 2. 直接转换为紧凑的16进制字符串（QByteArray内置方法）
     QString hexStr = byteData.toHex().toUpper();
-
-    // 3. 格式化显示（每两个字符加空格，更易读）
     QString formattedHex;
-    for (int i = 0; i < hexStr.size(); i += 2) {
+    for (int i = 0; i < hexStr.size(); i += 2)
+    {
         formattedHex += hexStr.mid(i, 2) + " ";
     }
-
-    // 4. 追加到textBrowser
-    textBrowser->append("服务端（16进制）：" + formattedHex.trimmed());
+    // TODO: 追回到 textBrowser
 }
 
 void MainWindow::sendMessages()
 {
     QString sendMessage_str = lineEdit->text();
     QByteArray sendMessage = sendMessage_str.toUtf8();
-    textBrowser->append("客户端：" + sendMessage_str);
     emit sigSend(sendMessage);
 }
 
@@ -519,15 +814,12 @@ void MainWindow::onUpgradeStatus(QString status)
 
 void MainWindow::onUpgradeFinished(bool success, QString message)
 {
-    QMessageBox::information(this,
-                             success ? "升级成功" : "升级失败",
-                             message);
+    QMessageBox::information(this, success ? "升级成功" : "升级失败", message);
 }
 
-// 核心：创建自定义标题栏（支持全样式自定义）
+// 创建自定义标题栏
 void MainWindow::createCustomTitleBar(int height, QString bgColor, QString textColor, QString hoverColor, QString titleText, QString borderColor, int borderWidth)
 {
-    // 1. 创建标题栏容器
     QWidget *titleBar = new QWidget(this);
     titleBar->setFixedHeight(height);
     titleBar->setStyleSheet(QString("QWidget { background-color: %1; }").arg(bgColor));
@@ -536,14 +828,11 @@ void MainWindow::createCustomTitleBar(int height, QString bgColor, QString textC
     titleLayout->setContentsMargins(15, 0, 10, 0);
     titleLayout->setSpacing(15);
 
-    // ========== 新增：添加标题栏图标 ==========
+    // 添加标题栏图标
     QLabel *titleFlag = new QLabel(titleBar);
-    // 设置图片（资源文件路径）
     QPixmap pixmap(":/new/res/res/flag.png");
-    // 缩放图片到合适大小（适配标题栏高度，保留宽高比）
     pixmap = pixmap.scaled(height - 10, height - 10, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     titleFlag->setPixmap(pixmap);
-    // 让图片垂直居中
     titleFlag->setAlignment(Qt::AlignVCenter);
 
     QLabel *titleLabel = new QLabel(titleText, titleBar);
@@ -553,34 +842,36 @@ void MainWindow::createCustomTitleBar(int height, QString bgColor, QString textC
     minBtn->setIcon(this->style()->standardIcon(QStyle::SP_TitleBarMinButton));
     minBtn->setFixedSize(height - 10, height - 10);
     minBtn->setStyleSheet(QString(R"(
-                                  QPushButton { border: none; border-radius: 4px; background-color: #696969;}
-                                  QPushButton:hover { background-color: %1; }
-                                  )").arg(hoverColor));
+        QPushButton { border: none; border-radius: 4px; background-color: #696969;}
+        QPushButton:hover { background-color: %1; }
+    )")
+                              .arg(hoverColor));
 
     QPushButton *closeBtn = new QPushButton(titleBar);
     closeBtn->setIcon(this->style()->standardIcon(QStyle::SP_TitleBarCloseButton));
     closeBtn->setFixedSize(height - 10, height - 10);
     closeBtn->setStyleSheet(R"(
-                            QPushButton { border: none; border-radius: 4px; background-color: #696969; }
-                            QPushButton:hover { background-color: #FF4D4F; }
-                            )");
+        QPushButton { border: none; border-radius: 4px; background-color: #696969; }
+        QPushButton:hover { background-color: #FF4D4F; }
+    )");
 
-    titleLayout->addWidget(titleFlag); // 图标居左
+    titleLayout->addWidget(titleFlag);
     titleLayout->addWidget(titleLabel);
     titleLayout->addStretch();
     titleLayout->addWidget(minBtn);
     titleLayout->addWidget(closeBtn);
 
-    // 2. 创建主容器（核心：添加边框样式）
+    // 创建主容器并设置边框
     QWidget *centralWidget = new QWidget(this);
-    // 设置主容器样式：边框颜色、宽度、背景色（窗口内容区背景）
     centralWidget->setStyleSheet(QString(R"(
-                                         QWidget {
-                                         border: %1px solid %2; /* 边框宽度 + 颜色 */
-                                         border-radius: 1px; /* 可选：窗口圆角 */
-                                         background-color: #2A364A; /* 窗口内容区背景色 */
-                                         }
-                                         )").arg(borderWidth).arg(borderColor));
+        QWidget {
+            border: %1px solid %2; 
+            border-radius: 1px; 
+            background-color: #2A364A; 
+        }
+    )")
+                                     .arg(borderWidth)
+                                     .arg(borderColor));
 
     QVBoxLayout *centralLayout = new QVBoxLayout(centralWidget);
     centralLayout->setContentsMargins(0, 0, 0, 0);
@@ -590,33 +881,29 @@ void MainWindow::createCustomTitleBar(int height, QString bgColor, QString textC
     centralLayout->addWidget(ui->centralwidget);
     this->setCentralWidget(centralWidget);
 
-    // 绑定按钮事件
     connect(minBtn, &QPushButton::clicked, this, &MainWindow::showMinimized);
     connect(closeBtn, &QPushButton::clicked, this, &MainWindow::close);
 
-    // 安装事件过滤器（窗口拖动）
     titleBar->installEventFilter(this);
 }
 
-// 事件过滤器：实现自定义标题栏的拖动功能
+// 拖动功能实现
 bool MainWindow::eventFilter(QObject *obj, QEvent *event)
 {
     if (event->type() == QEvent::MouseButtonPress)
     {
-        QMouseEvent *mouseEvent = static_cast<QMouseEvent*>(event);
+        QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
         if (mouseEvent->button() == Qt::LeftButton)
         {
-            // 记录鼠标按下时的位置
             lastTitleBarPos = mouseEvent->globalPos() - this->frameGeometry().topLeft();
             return true;
         }
     }
     else if (event->type() == QEvent::MouseMove)
     {
-        QMouseEvent *mouseEvent = static_cast<QMouseEvent*>(event);
+        QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
         if (mouseEvent->buttons() & Qt::LeftButton)
         {
-            // 移动窗口
             this->move(mouseEvent->globalPos() - lastTitleBarPos);
             return true;
         }

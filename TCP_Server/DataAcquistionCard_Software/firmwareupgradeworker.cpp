@@ -1,8 +1,9 @@
 #include "firmwareupgradeworker.h"
+#include <QDataStream>
 
 FirmwareUpgradeWorker::FirmwareUpgradeWorker(QObject *parent) : QObject(parent)
 {
-
+    m_stop = false;
 }
 
 void FirmwareUpgradeWorker::setFirmwareData(const QByteArray &data)
@@ -29,7 +30,7 @@ void FirmwareUpgradeWorker::startUpgrade()
 
     if(!sendStartPacket())
     {
-        emit upgradeFinished(false, "发送START失败");
+        emit upgradeFinished(false, "发送 START 失败");
         return;
     }
 
@@ -46,9 +47,12 @@ void FirmwareUpgradeWorker::startUpgrade()
 
         QByteArray chunk = m_firmwareData.mid(offset, packetSize);
 
+        // 更新状态文字
+        emit statusChanged(QString("正在发送数据包: %1/%2").arg(offset).arg(totalSize));
+
         if(!sendDataPacket(offset, chunk))
         {
-            emit upgradeFinished(false, "发送数据失败");
+            emit upgradeFinished(false, "发送数据包失败");
             return;
         }
 
@@ -65,7 +69,7 @@ void FirmwareUpgradeWorker::startUpgrade()
 
     if(!sendEndPacket())
     {
-        emit upgradeFinished(false, "发送END失败");
+        emit upgradeFinished(false, "发送 END 失败");
         return;
     }
 
@@ -86,6 +90,7 @@ bool FirmwareUpgradeWorker::sendStartPacket()
     stream << size;
 
     m_socket->write(packet);
+    m_socket->flush(); // 确保立即发出
 
     return waitForAck();
 }
@@ -103,9 +108,11 @@ bool FirmwareUpgradeWorker::sendDataPacket(quint32 offset, const QByteArray &chu
     stream << offset;
     stream << length;
 
+    // DataStream 写入头后，直接追加原始字节流
     packet.append(chunk);
 
     m_socket->write(packet);
+    m_socket->flush();
 
     return waitForAck();
 }
@@ -116,18 +123,22 @@ bool FirmwareUpgradeWorker::sendEndPacket()
     packet.append(0xA2);
 
     m_socket->write(packet);
+    m_socket->flush();
 
     return waitForAck();
 }
 
 bool FirmwareUpgradeWorker::waitForAck(int timeoutMs)
 {
+    // 注意：如果你的 TcpWorker 正在另一个线程处理 readyRead 信号，
+    // waitForReadyRead 可能会失效或产生冲突。
     if(!m_socket->waitForReadyRead(timeoutMs))
         return false;
 
     QByteArray response = m_socket->readAll();
 
-    if(response.contains(0x55))   // 假设0x55为ACK
+    // 匹配 STM32 发回的应答（根据你之前的代码，应答包通常包含 0x55 0xAA 0xB0）
+    if(response.contains(0x55))   
         return true;
 
     return false;
