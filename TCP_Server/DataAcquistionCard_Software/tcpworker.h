@@ -16,6 +16,21 @@ enum WorkerState {
     Collecting  // 传感器数据采集
 };
 
+
+#pragma pack(1)
+
+struct sendParametersData {
+    quint16 channels;
+    quint8 tempMin;
+    quint8 tempMax;
+    quint8 humiMin;
+    quint8 humiMax;
+    quint8 rateValue;
+};
+#pragma pack()
+
+
+
 class TcpWorker : public QObject
 {
     Q_OBJECT
@@ -29,6 +44,7 @@ public slots:
     void receiveMessages();
     void startUpgrade(QByteArray firmware);
     void onReadyRead();
+    void onSendParametersData(QByteArray data);
 
 signals:
     void sigConnected();
@@ -36,6 +52,7 @@ signals:
     void sigRecv(QString messages);
     void updateUpgradeProgress(int port);
     void updateUpgradeStatus(QString state);
+    void sendSensorDataToPrevent(int index, float temp, float humity, QVector<uint8_t> time);
 
 private:
     QTcpSocket *socket;

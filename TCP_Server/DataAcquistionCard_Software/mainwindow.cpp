@@ -1,9 +1,18 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
+#include <QMetaType>
+
+
+#include <QMetaType>
+
+// 在任何 connect 语句执行之前调用
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow)
 {
+    qRegisterMetaType<QVector<uint8_t>>("QVector<uint8_t>");
+
     ui->setupUi(this);
 
     // 初始化 TCP 线程与 Worker
@@ -11,6 +20,24 @@ MainWindow::MainWindow(QWidget *parent)
     tcpWorker = new TcpWorker;
     tcpWorker->moveToThread(tcpThread);
     tcpThread->start();
+
+    // 初始化 文件 线程与 Worker
+    fileThread = new QThread;
+    fileWorker = new FileWorker;
+    fileWorker->moveToThread(fileThread);
+    fileThread->start();
+
+    // TCP 线程解析出数据后，直接发给文件线程
+
+    bool ok = connect(tcpWorker, &TcpWorker::sendSensorDataToPrevent,
+                     fileWorker, &FileWorker::onSaveSensorData);
+    if(!ok) {
+        qDebug() << "Signal-Slot connection failed!";
+    }
+
+
+    // 资源清理连接
+    connect(fileThread, &QThread::finished, fileWorker, &QObject::deleteLater);
 
     // 1. 隐藏原生标题栏（必须）
     this->setWindowFlags(Qt::FramelessWindowHint);
@@ -31,10 +58,20 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     // 退出线程处理
-    tcpThread->quit();
-    tcpThread->wait();
+    if (tcpThread->isRunning()) {
+        tcpThread->quit();
+        tcpThread->wait();
+    }
     delete tcpWorker;
     delete tcpThread;
+
+    if (fileThread->isRunning()) {
+        fileThread->quit();
+        fileThread->wait();
+    }
+    delete fileWorker;
+    delete fileThread;
+
     delete ui;
 }
 
@@ -73,7 +110,7 @@ void MainWindow::initContentArea(void)
 
     QHBoxLayout *contolAreaLayout = new QHBoxLayout(contolArea);
     contolAreaLayout->setContentsMargins(10, 10, 10, 5);
-    contolAreaLayout->setSpacing(20);
+    contolAreaLayout->setSpacing(10);
 
     tcpConnectWindow();
     firmwareUpdateWindow();
@@ -215,10 +252,12 @@ void MainWindow::tcpConnectWindow()
     connect(this, &MainWindow::sigConnect, tcpWorker, &TcpWorker::connectToHost);
     connect(this, &MainWindow::sigSend, tcpWorker, &TcpWorker::sendData);
     connect(this, &MainWindow::sigDisconnect, tcpWorker, &TcpWorker::disconnectFromHost);
+    connect(this, &MainWindow::sigSendParametersData, tcpWorker, &TcpWorker::onSendParametersData);
 
     connect(tcpWorker, &TcpWorker::sigConnected, this, &MainWindow::connected);
     connect(tcpWorker, &TcpWorker::sigDisconnected, this, &MainWindow::disconnected);
     connect(tcpWorker, &TcpWorker::sigRecv, this, &MainWindow::receiveMessages);
+    connect(tcpWorker, &TcpWorker::sendSensorDataToPrevent, this, &MainWindow::receSensorDataToPrevent);
 }
 
 void MainWindow::firmwareUpdateWindow()
@@ -405,6 +444,9 @@ void MainWindow::parametersWindow()
         sensorCheckBoxes[i] = new QCheckBox(QString("通道 %1").arg(i + 1), gridContainer);
         sensorCheckBoxes[i]->setStyleSheet(checkStyle);
         sensorCheckBoxes[i]->setCursor(Qt::PointingHandCursor);
+        if (i < 3) {
+            sensorCheckBoxes[i]->setChecked(true);
+        }
         gridLayout->addWidget(sensorCheckBoxes[i], i / 2, i % 2);   // 计算网格位置：每行 2 个，共 8 行
     }
     mainLayout->addWidget(gridContainer);
@@ -446,7 +488,8 @@ void MainWindow::parametersWindow()
         minEdit->setPlaceholderText("下限");
         minEdit->setFixedWidth(60);
         minEdit->setStyleSheet(thresholdEditStyle);
-        minEdit->setValidator(new QDoubleValidator(-100, 100, 1, this)); // 限制输入数字
+
+        minEdit->setValidator(new QIntValidator(0, 100, this));
 
         QLabel *waveLabel = new QLabel("~", thresholdArea);
 
@@ -454,7 +497,7 @@ void MainWindow::parametersWindow()
         maxEdit->setPlaceholderText("上限");
         maxEdit->setFixedWidth(60);
         maxEdit->setStyleSheet(thresholdEditStyle);
-        maxEdit->setValidator(new QDoubleValidator(-100, 100, 1, this));
+        maxEdit->setValidator(new QIntValidator(-100, 100, this));
 
         thresholdLayout->addWidget(label, row, 0);
         thresholdLayout->addWidget(minEdit, row, 1);
@@ -465,6 +508,11 @@ void MainWindow::parametersWindow()
 
     createThresholdRow(0, "温度阈值:", tempMinEdit, tempMaxEdit);
     createThresholdRow(1, "湿度阈值:", humiMinEdit, humiMaxEdit);
+
+    tempMinEdit->setText("16");
+    tempMaxEdit->setText("56");
+    humiMinEdit->setText("20");
+    humiMaxEdit->setText("90");
     mainLayout->addWidget(thresholdArea);
 
     line1 = new QFrame(parametersWidget);
@@ -564,6 +612,8 @@ void MainWindow::parametersWindow()
                                  font-family: 'Consolas', 'Monospace';
                                  }
                                  )");
+
+    connect(fileWorker, &FileWorker::sigFileCount, this, &MainWindow::updateWriteCount);
     countLayout->addWidget(countLabel);
     countLayout->addWidget(dataCountEdit);
     countLayout->addStretch();
@@ -599,6 +649,8 @@ void MainWindow::parametersWindow()
     storageBtnLayout->addWidget(stopStorageBtn);
     mainLayout->addLayout(storageBtnLayout);
 
+
+
     exportDataBtn = new QPushButton("导出数据报告 (.csv)", parametersWidget);
     exportDataBtn->setFixedHeight(35);
     exportDataBtn->setStyleSheet(R"(
@@ -613,7 +665,43 @@ void MainWindow::parametersWindow()
                                  QPushButton:hover { background-color: #EBB563; }
                                  QPushButton:pressed { background-color: #CF9236; }
                                  )");
+
+
     mainLayout->addWidget(exportDataBtn);
+
+    // 1. 开始存储：开启写入闸门
+    connect(startStorageBtn, &QPushButton::clicked, this, [=](){
+        QMetaObject::invokeMethod(fileWorker, "setStorageActive", Q_ARG(bool, true));
+
+        startStorageBtn->setEnabled(false);
+        stopStorageBtn->setEnabled(true);
+        exportDataBtn->setEnabled(true);
+        qDebug() << "开始记录数据...";
+    });
+
+    // 2. 停止存储：只是暂停写入，不结束当前文件
+    connect(stopStorageBtn, &QPushButton::clicked, this, [=](){
+        QMetaObject::invokeMethod(fileWorker, "setStorageActive", Q_ARG(bool, false));
+
+        startStorageBtn->setEnabled(true);
+        stopStorageBtn->setEnabled(false);
+        // 停止时依然可以导出
+        qDebug() << "暂停记录数据（文件仍打开）";
+    });
+
+    // 3. 导出报告：结束当前文件生命周期
+    connect(exportDataBtn, &QPushButton::clicked, this, [=](){
+        // 调用我们新增的彻底关闭逻辑
+        QMetaObject::invokeMethod(fileWorker, "stopAndExport");
+
+        // UI 状态重置
+        startStorageBtn->setEnabled(true);
+        stopStorageBtn->setEnabled(false);
+        exportDataBtn->setEnabled(false); // 导出后，没开始新记录前不能再导
+
+        QMessageBox::information(this, "导出成功", "当前记录已保存。点击“开始”将创建新记录文件。");
+    });
+
 
     mainLayout->addSpacing(10);
     line3 = new QFrame(parametersWidget);
@@ -621,9 +709,10 @@ void MainWindow::parametersWindow()
     line3->setFrameShadow(QFrame::Sunken);
     line3->setStyleSheet("background-color: #EBEEF5;");
     mainLayout->addWidget(line3);
-    thresholdConfirmBtn = new QPushButton("应用阈值配置", parametersWidget);
-    thresholdConfirmBtn->setFixedHeight(35);
-    thresholdConfirmBtn->setStyleSheet(R"(
+
+    parametersConfirmBtn = new QPushButton("应用阈值配置", parametersWidget);
+    parametersConfirmBtn->setFixedHeight(35);
+    parametersConfirmBtn->setStyleSheet(R"(
                                        QPushButton {
                                        background-color: #4080FF;
                                        color: white;
@@ -634,7 +723,9 @@ void MainWindow::parametersWindow()
                                        QPushButton:hover { background-color: #66B1FF; }
                                        QPushButton:pressed { background-color: #3A8EE6; }
                                        )");
-    mainLayout->addWidget(thresholdConfirmBtn);
+    connect(parametersConfirmBtn, &QPushButton::clicked, this, &MainWindow::onParametersConfirmBtn);
+
+    mainLayout->addWidget(parametersConfirmBtn);
     mainLayout->addStretch(); // 将所有控件往上挤，避免下方留白不均匀
 }
 
@@ -679,7 +770,7 @@ void MainWindow::sensorDataPreventWindow()
         // 1. 创建超扁平单元格
         // 宽度 70px，高度 28px
         QLabel *dataCell = new QLabel(dataGridContainer);
-        dataCell->setFixedSize(170, 38);
+        dataCell->setFixedSize(190, 38);
         dataCell->setStyleSheet(cellStyle);
         dataCell->setAlignment(Qt::AlignCenter);
 
@@ -687,9 +778,9 @@ void MainWindow::sensorDataPreventWindow()
         QString initialText = QString(
             "<table width='100%' cellpadding='0' cellspacing='0' style='border:none;'>"
             "<tr>"
-            "<td align='center' style='color:#909399; font-weight:bold; font-size:18px;'>%1</td>"
-            "<td align='center' style='color:#E6A23C; font-size:18px;'>--℃</td>"
-            "<td align='center' style='color:#409EFF; font-size:18px;'>--%</td>"
+            "<td align='center' style='color:#909399; font-weight:bold; font-size:15px;'>%1</td>"
+            "<td align='center' style='color:#E6A23C; font-size:15px;'>T: ---- </td>"
+            "<td align='center' style='color:#409EFF; font-size:15px;'>H: ---- </td>"
             "</tr>"
             "</table>"
         ).arg(i + 1, 2, 10, QChar('0'));
@@ -744,6 +835,7 @@ void MainWindow::sensorDataPreventWindow()
                               }
                               )");
     mainLayout->addWidget(customPlot);
+    mainLayout->addStretch();
 
     // 移除 Stretch，让数据显示在顶部；或者保留以适应大窗口
 
@@ -815,6 +907,61 @@ void MainWindow::onUpgradeStatus(QString status)
 void MainWindow::onUpgradeFinished(bool success, QString message)
 {
     QMessageBox::information(this, success ? "升级成功" : "升级失败", message);
+}
+
+void MainWindow::receSensorDataToPrevent(int index, float temp, float humity, QVector<uint8_t> time)
+{
+    updateSensorUI(index - 1, temp, humity);
+}
+
+void MainWindow::onParametersConfirmBtn()
+{
+    qDebug() << "参数设置";
+    sendParametersData data;
+
+    // 1. 读取哪16个通道开启
+    quint16 channel = 0;
+    for (int i = 0; i < 16; i++) {
+        if (sensorCheckBoxes[i]->isChecked()) {
+            channel |= 1 << i;
+        }
+    }
+    data.channels = channel;
+    qDebug() << channel;
+
+    // 2. 读取四个阈值参数
+    quint8 tempmin = (tempMinEdit->text().trimmed()).toUInt();
+    quint8 tempmax = (tempMaxEdit->text().trimmed()).toUInt();
+    quint8 humimin = (humiMinEdit->text().trimmed()).toUInt();
+    quint8 humimax = (humiMaxEdit->text().trimmed()).toUInt();
+    data.tempMin = tempmin;
+    data.tempMax = tempmax;
+    data.humiMin = humimin;
+    data.humiMax = humimax;
+    qDebug() << "温度阈值:" << tempmin << "-" << tempmax;
+    qDebug() << "湿度阈值:" << humimin << "-" << humimax;
+
+    // 3. 读取哪个采样速率
+    quint8 rateindex = 0;
+    for (int i = 0; i < 4; i++) {
+        if (rateButtons[i]->isChecked()) {
+            rateindex = i;
+            break;
+        }
+    }
+    data.rateValue = rateindex;
+    qDebug() << "采样速率:" << rateindex;
+
+    // 4. 数据处理与发送
+    QByteArray byte;
+    byte.resize(sizeof(sendParametersData));
+    memcpy(byte.data(), &data, sizeof (sendParametersData));
+    emit sigSendParametersData(byte);
+}
+
+void MainWindow::updateWriteCount(int num)
+{
+    dataCountEdit->setText(QString::number(num));
 }
 
 // 创建自定义标题栏

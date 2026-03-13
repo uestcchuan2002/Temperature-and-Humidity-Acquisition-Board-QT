@@ -16,9 +16,9 @@
 #include <QTcpSocket>
 #include <QTextBrowser>
 #include <QLineEdit>
-#include <QProgressBar> // ???????????
-#include <QFile>        // ????????????
-#include <QTimer>       // ???????????
+#include <QProgressBar>
+#include <QFile>
+#include <QTimer>
 #include <QFileDialog>
 #include <QFile>
 #include <QMessageBox>
@@ -30,7 +30,7 @@
 #include <QComboBox>
 
 #include "tcpworker.h"
-#include "firmwareupgradeworker.h"
+#include "fileworker.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -45,68 +45,67 @@ signals:
     void sigDisconnect();
     void sigSend(QByteArray data);
     void sigUpdate(QByteArray data);
+    void sigSendParametersData(QByteArray data);
 
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
 protected:
-    // ???????????????
+
     bool eventFilter(QObject *obj, QEvent *event) override;
 
 private:
     Ui::MainWindow *ui;
 
-    QPoint lastTitleBarPos;     /* ?????????????????? */
+    QPoint lastTitleBarPos;
 
-    /* ota?? */
-    QThread *tcpThread = nullptr;
-    TcpWorker *tcpWorker = nullptr;
 
-    /* ???? */
-    QWidget *contentContainer;          /* ?????? */
+    QThread *tcpThread = nullptr;       // TCP线程
+    TcpWorker *tcpWorker = nullptr;     // TCP实例
 
-    QWidget *contolArea;                /* ???? */
-    QWidget *tcpConnectControlArea;     /* tcp?????? */
-    QWidget *firmwareUpdateWidget;      /* ota???? */
+    QThread *fileThread = nullptr;      // 文件线程
+    FileWorker *fileWorker = nullptr;   // 文件实例
 
-    QWidget *parameterAndSensorArea;    /* ???????? */
-    QWidget *parametersWidget;          /* ?????? */
-    QWidget *sensorDataPreventWidget;   /* ????????? */
+    QWidget *contentContainer;
 
-    /* tcp????????------------------------------start */
+    QWidget *contolArea;
+    QWidget *tcpConnectControlArea;
+    QWidget *firmwareUpdateWidget;
+
+    QWidget *parameterAndSensorArea;
+    QWidget *parametersWidget;
+    QWidget *sensorDataPreventWidget;
+
+
     QWidget *tcpConnectControlAreaFirst;
     QWidget *tcpConnectControlAreaSecond;
-    QLabel *ipLabel;                /* IP???? */
-    QLineEdit *ipEdit;              /* IP????? */
-    QLabel *portLabel;              /* ????? */
-    QLineEdit *portEdit;            /* ?????? */
-    QPushButton *connectBtn;        /* TCP???? */
-    QPushButton *disconnectBtn;     /* TCP?????? */
-    QLabel *tcpConncetState;        /* TCP???????? */
-    QLineEdit *lineEdit;            /* ????? */
-    QPushButton *messageSendBtn;    /* ?????? */
-    /* tcp????????------------------------------end */
+    QLabel *ipLabel;
+    QLineEdit *ipEdit;
+    QLabel *portLabel;
+    QLineEdit *portEdit;
+    QPushButton *connectBtn;
+    QPushButton *disconnectBtn;
+    QLabel *tcpConncetState;
+    QLineEdit *lineEdit;
+    QPushButton *messageSendBtn;
 
-    /* ota??????---------------------------------start */
-    QLabel *otaLabel;                   /* OTA???? */
-    QPushButton *selectFileBtn;         /* ???????? */
-    QLineEdit *firmwarePathEdit;        /* ??????? */
-    QPushButton *updateBtn;             /* ???? */
-    QLabel *updateStateLabel;           /* ?????? */
-    QProgressBar *updateProgressBar;    /* ????? */
-    QByteArray m_firmwareData;          /* ?????? */
-    QString    m_firmwarePath;          /* ???? */
-    /* ota??????---------------------------------end */
+    QLabel *otaLabel;
+    QPushButton *selectFileBtn;
+    QLineEdit *firmwarePathEdit;
+    QPushButton *updateBtn;
+    QLabel *updateStateLabel;
+    QProgressBar *updateProgressBar;
+    QByteArray m_firmwareData;
+    QString    m_firmwarePath;
 
-    /* ?????????---------------------------------start */
-    QLabel *sensorOpenLabel;                /* ??????? */
-    QCheckBox* sensorCheckBoxes[16];        /* ??????? */
+    QLabel *sensorOpenLabel;
+    QCheckBox* sensorCheckBoxes[16];
     QFrame *line;
     QLabel *thresholdTitle;
     QLineEdit *tempMinEdit, *tempMaxEdit;
     QLineEdit *humiMinEdit, *humiMaxEdit;
-    QPushButton *thresholdConfirmBtn;
+    QPushButton *parametersConfirmBtn;
     QFrame *line1;
     QLabel *rateTitle;
     QButtonGroup *rateGroup;
@@ -117,24 +116,20 @@ private:
     QPushButton *startStorageBtn;
     QPushButton *stopStorageBtn;
     QPushButton *exportDataBtn;
-    /* ?????????---------------------------------end */
 
-    /* ?????????---------------------------------start */
     QLabel *titleLabel;
     QWidget *dataGridContainer;
     QLabel *sensorDataLabels[16];
     QFrame *line4;
-    /* ?????????---------------------------------end */
 
-    // ???????????
     void createCustomTitleBar(int height = 40,
                                   QString bgColor = "#2c3e50",
                                   QString textColor = "#ffffff",
                                   QString hoverColor = "#34495e",
                                   QString titleText = "?????",
-                                  QString borderColor = "#165DFF",  // ????
-                                  int borderWidth = 1);             // ????
-    // ???????
+                                  QString borderColor = "#165DFF",
+                                  int borderWidth = 1);
+
     void initContentArea(void);
 
     void tcpConnectWindow(void);
@@ -142,36 +137,40 @@ private:
     void parametersWindow(void);
     void sensorDataPreventWindow(void);
 
+
+
     void updateSensorUI(int index, float temp, float humi) {
         if (index < 0 || index >= 16) return;
 
         QString text = QString(
                     "<table width='100%' style='border:none;'>"
                     "<tr>"
-                    "<td align='center' style='color:#909399; font-weight:bold; font-size:18px;'>%1</td>"
-                    "<td align='center' style='color:#E6A23C; font-size:18px;'>%2?</td>"
-                    "<td align='center' style='color:#409EFF; font-size:18px;'>%3%</td>"
+                    "<td align='center' style='color:#909399; font-weight:bold; font-size:15px;'>%1</td>"
+                    "<td align='center' style='color:#E6A23C; font-size:15px;'>T: %2 </td>"
+                    "<td align='center' style='color:#409EFF; font-size:15px;'>H: %3 </td>"
                     "</tr>"
                     "</table>"
                     ).arg(index + 1, 2, 10, QChar('0'))
-                .arg(temp, 0, 'f', 1) // ??????
-                .arg(humi, 0, 'f', 0); // ????
+                .arg(temp, 0, 'f', 1)
+                .arg(humi, 0, 'f', 1);
 
         sensorDataLabels[index]->setText(text);
     }
 
 private slots:
-    void toConnect();           /* ???? */
-    void toDisConnect();        /* ???? */
-    void connected();           /* ??? */
-    void disconnected();        /* ????? */
-    void receiveMessages(QString messages);     /* ???? */
-    void sendMessages();        /* ???? */
-    void startUpgrade();        /* ???? */
-    void onUpgradeProgress(int percent);        /* ?????? */
-    void onUpgradeStatus(QString status);       /* ?????? */
-    void onUpgradeFinished(bool success, QString message); /* ?????? */
+    void toConnect();
+    void toDisConnect();
+    void connected();
+    void disconnected();
+    void receiveMessages(QString messages);
+    void sendMessages();
+    void startUpgrade();
+    void onUpgradeProgress(int percent);
+    void onUpgradeStatus(QString status);
+    void onUpgradeFinished(bool success, QString message);
 
-    // --- ???? ---
+    void receSensorDataToPrevent(int index, float temp, float humity, QVector<uint8_t> time);
+    void onParametersConfirmBtn(void);
+    void updateWriteCount(int num);
 };
 #endif // MAINWINDOW_H

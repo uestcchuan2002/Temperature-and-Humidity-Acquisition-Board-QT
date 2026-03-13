@@ -29,7 +29,7 @@ void TcpWorker::sendData(QByteArray data)
 
 void TcpWorker::receiveMessages()
 {
-   ;
+
 }
 
 void TcpWorker::startUpgrade(QByteArray firmware)
@@ -97,6 +97,36 @@ void TcpWorker::onReadyRead()
     }
 }
 
+void TcpWorker::onSendParametersData(QByteArray data)
+{
+    qDebug() << "hello";
+    QByteArray packet;
+
+    // 1. 帧头
+    packet.append(0x55);
+    packet.append(0xAA);
+
+    // 2. 指令为C1
+    packet.append(0xC1);
+
+    // 3. 数据长度
+    quint16 len = sizeof(sendParametersData);
+    packet.append((char*)&len, 2);
+
+    // 4. 转换为QByteArray
+    packet.append(data);
+
+    // 5. CRC
+    quint16 crc = crc16_modbus(packet);
+    packet.append((char*)&crc, 2);
+
+    // 6. 发送
+    socket->write(packet);
+
+    // 7. 打印调试
+    qDebug() << "Send END:" << packet.toHex();
+}
+
 typedef struct {
     uint8_t device_id;                              // 设备ID
     float temperature;                              // 温度值
@@ -113,8 +143,8 @@ void TcpWorker::parseSensorData()
     while (sensorBuffer.size() >= totalFrameLen) {
         // 1. 查找包头 55 AA B1
         if ((unsigned char)sensorBuffer[0] != 0x55 ||
-                (unsigned char)sensorBuffer[0] != 0x55 ||
-                (unsigned char)sensorBuffer[0] != 0x55)
+                (unsigned char)sensorBuffer[1] != 0xAA ||
+                (unsigned char)sensorBuffer[2] != 0xB1)
         {
             sensorBuffer.remove(0, 1);
             continue;
@@ -144,9 +174,14 @@ void TcpWorker::parseSensorData()
         QVector<uint8_t> timeData;
         for(int i=0; i<6; ++i) timeData.append((uint8_t)payload[9 + i]);
 
+        /*
         qDebug() << QString("ID:%1 Temp:%2 Humi:%3 Time:20%4-%5-%6-%7-%8-%9")
                     .arg(device_id).arg(temp).arg(humi)
                     .arg(timeData[0]).arg(timeData[1]).arg(timeData[2]).arg(timeData[3]).arg(timeData[4]).arg(timeData[5]);
+        */
+
+        // 发送信号，传感器参数
+        emit sendSensorDataToPrevent(device_id, temp, humi, timeData);
         // 5. 移除已处理的完整帧
         sensorBuffer.remove(0, totalFrameLen);
     }

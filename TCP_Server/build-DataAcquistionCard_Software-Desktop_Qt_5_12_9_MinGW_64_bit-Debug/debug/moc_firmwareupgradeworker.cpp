@@ -21,8 +21,8 @@ QT_BEGIN_MOC_NAMESPACE
 QT_WARNING_PUSH
 QT_WARNING_DISABLE_DEPRECATED
 struct qt_meta_stringdata_FirmwareUpgradeWorker_t {
-    QByteArrayData data[11];
-    char stringdata0[125];
+    QByteArrayData data[9];
+    char stringdata0[100];
 };
 #define QT_MOC_LITERAL(idx, ofs, len) \
     Q_STATIC_BYTE_ARRAY_DATA_HEADER_INITIALIZER_WITH_OFFSET(len, \
@@ -39,15 +39,12 @@ QT_MOC_LITERAL(4, 47, 13), // "statusChanged"
 QT_MOC_LITERAL(5, 61, 6), // "status"
 QT_MOC_LITERAL(6, 68, 15), // "upgradeFinished"
 QT_MOC_LITERAL(7, 84, 7), // "success"
-QT_MOC_LITERAL(8, 92, 7), // "message"
-QT_MOC_LITERAL(9, 100, 12), // "startUpgrade"
-QT_MOC_LITERAL(10, 113, 11) // "stopUpgrade"
+QT_MOC_LITERAL(8, 92, 7) // "message"
 
     },
     "FirmwareUpgradeWorker\0progressChanged\0"
     "\0percent\0statusChanged\0status\0"
-    "upgradeFinished\0success\0message\0"
-    "startUpgrade\0stopUpgrade"
+    "upgradeFinished\0success\0message"
 };
 #undef QT_MOC_LITERAL
 
@@ -57,7 +54,7 @@ static const uint qt_meta_data_FirmwareUpgradeWorker[] = {
        8,       // revision
        0,       // classname
        0,    0, // classinfo
-       5,   14, // methods
+       3,   14, // methods
        0,    0, // properties
        0,    0, // enums/sets
        0,    0, // constructors
@@ -65,22 +62,14 @@ static const uint qt_meta_data_FirmwareUpgradeWorker[] = {
        3,       // signalCount
 
  // signals: name, argc, parameters, tag, flags
-       1,    1,   39,    2, 0x06 /* Public */,
-       4,    1,   42,    2, 0x06 /* Public */,
-       6,    2,   45,    2, 0x06 /* Public */,
-
- // slots: name, argc, parameters, tag, flags
-       9,    0,   50,    2, 0x0a /* Public */,
-      10,    0,   51,    2, 0x0a /* Public */,
+       1,    1,   29,    2, 0x06 /* Public */,
+       4,    1,   32,    2, 0x06 /* Public */,
+       6,    2,   35,    2, 0x06 /* Public */,
 
  // signals: parameters
     QMetaType::Void, QMetaType::Int,    3,
     QMetaType::Void, QMetaType::QString,    5,
     QMetaType::Void, QMetaType::Bool, QMetaType::QString,    7,    8,
-
- // slots: parameters
-    QMetaType::Void,
-    QMetaType::Void,
 
        0        // eod
 };
@@ -94,8 +83,6 @@ void FirmwareUpgradeWorker::qt_static_metacall(QObject *_o, QMetaObject::Call _c
         case 0: _t->progressChanged((*reinterpret_cast< int(*)>(_a[1]))); break;
         case 1: _t->statusChanged((*reinterpret_cast< QString(*)>(_a[1]))); break;
         case 2: _t->upgradeFinished((*reinterpret_cast< bool(*)>(_a[1])),(*reinterpret_cast< QString(*)>(_a[2]))); break;
-        case 3: _t->startUpgrade(); break;
-        case 4: _t->stopUpgrade(); break;
         default: ;
         }
     } else if (_c == QMetaObject::IndexOfMethod) {
@@ -153,13 +140,13 @@ int FirmwareUpgradeWorker::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 5)
+        if (_id < 3)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 5;
+        _id -= 3;
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 5)
+        if (_id < 3)
             *reinterpret_cast<int*>(_a[0]) = -1;
-        _id -= 5;
+        _id -= 3;
     }
     return _id;
 }
