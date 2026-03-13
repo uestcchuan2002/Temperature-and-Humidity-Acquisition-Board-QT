@@ -1,0 +1,10 @@
+debug/fileworker.o
+debug/main.o
+debug/mainwindow.o
+debug/qcustomplot.o
+debug/tcpworker.o
+debug/qrc_res.o
+debug/moc_fileworker.o
+debug/moc_mainwindow.o
+debug/moc_qcustomplot.o
+debug/moc_tcpworker.o

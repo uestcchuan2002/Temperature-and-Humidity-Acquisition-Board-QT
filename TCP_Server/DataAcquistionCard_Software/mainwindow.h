@@ -31,6 +31,7 @@
 
 #include "tcpworker.h"
 #include "fileworker.h"
+#include "qcustomplot.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -121,6 +122,13 @@ private:
     QWidget *dataGridContainer;
     QLabel *sensorDataLabels[16];
     QFrame *line4;
+    QCustomPlot *realtimePlot;  // 替换之前的 QWidget *customPlot
+    QTimer *mDataTimer = nullptr;
+    QComboBox *chartChannelSelect;
+    double mStartTime;
+    int currentChannelIndex = 0; // 记录当前 ComboBox 选中的通道
+    float latestTemp[17]; // 索引 1-16
+    float latestHumi[17];
 
     void createCustomTitleBar(int height = 40,
                                   QString bgColor = "#2c3e50",
@@ -157,6 +165,7 @@ private:
         sensorDataLabels[index]->setText(text);
     }
 
+
 private slots:
     void toConnect();
     void toDisConnect();
@@ -172,5 +181,8 @@ private slots:
     void receSensorDataToPrevent(int index, float temp, float humity, QVector<uint8_t> time);
     void onParametersConfirmBtn(void);
     void updateWriteCount(int num);
+
+    void updatePlot();
+
 };
 #endif // MAINWINDOW_H

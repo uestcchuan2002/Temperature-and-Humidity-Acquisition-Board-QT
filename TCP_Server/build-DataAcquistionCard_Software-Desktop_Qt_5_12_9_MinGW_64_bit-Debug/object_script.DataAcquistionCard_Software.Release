@@ -1,0 +1,10 @@
+release/fileworker.o
+release/main.o
+release/mainwindow.o
+release/qcustomplot.o
+release/tcpworker.o
+release/qrc_res.o
+release/moc_fileworker.o
+release/moc_mainwindow.o
+release/moc_qcustomplot.o
+release/moc_tcpworker.o

@@ -57,17 +57,29 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
-    // 退出线程处理
-    if (tcpThread->isRunning()) {
+    // 第一步：停止定时器（避免定时器触发时访问已销毁的 realtimePlot）
+    if (mDataTimer) {
+        mDataTimer->stop();
+        delete mDataTimer;
+        mDataTimer = nullptr;
+    }
+    // 第二步：销毁 QCustomPlot（避免虚函数表访问错误）
+    if (realtimePlot) {
+        delete realtimePlot;
+        realtimePlot = nullptr;
+    }
+
+    // 第三步：处理线程
+    if (tcpThread && tcpThread->isRunning()) {
         tcpThread->quit();
-        tcpThread->wait();
+        tcpThread->wait(3000); // 超时保护，避免卡死
     }
     delete tcpWorker;
     delete tcpThread;
 
-    if (fileThread->isRunning()) {
+    if (fileThread && fileThread->isRunning()) {
         fileThread->quit();
-        fileThread->wait();
+        fileThread->wait(3000);
     }
     delete fileWorker;
     delete fileThread;
@@ -810,35 +822,109 @@ void MainWindow::sensorDataPreventWindow()
     QLabel *chartTitle = new QLabel("传感器实时数据波形 (趋势图)", chartHeader);
     chartTitle->setStyleSheet("font-size: 18px; color: #333333; font-weight: bold; border:none;");
 
-    QComboBox *chartChannelSelect = new QComboBox(chartHeader);
+    chartChannelSelect = new QComboBox(chartHeader);
     for(int i=1; i<=16; ++i) chartChannelSelect->addItem(QString("查看通道 %1").arg(i, 2, 10, QChar('0')));
     chartChannelSelect->setFixedWidth(120);
     chartChannelSelect->setStyleSheet(R"(
                                       QComboBox { border: 1px solid #DCDFE6; border-radius: 4px; padding: 2px 5px; background: #F5F7FA; }
                                       )");
 
+    connect(chartChannelSelect, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        currentChannelIndex = index; // 更新成员变量
+
+        // 清空绘图数据，防止新通道和旧通道混在一起
+        if(realtimePlot->graphCount() >= 2) {
+            realtimePlot->graph(0)->data()->clear();
+            realtimePlot->graph(1)->data()->clear();
+        }
+
+        // 强制重绘
+        realtimePlot->replot();
+        qDebug() << "通道已切换至:" << index + 1;
+    });
+
     headerLayout->addWidget(chartTitle);
     headerLayout->addStretch();
     headerLayout->addWidget(chartChannelSelect);
     mainLayout->addWidget(chartHeader);
 
-    mainLayout->addStretch();
+    // 初始化绘图控件
+    realtimePlot = new QCustomPlot();
+    realtimePlot->setMinimumHeight(600); // 设置一个稳固的高度
+    realtimePlot->setBackground(QBrush(QColor("#1E1E1E")));
 
-    QWidget *customPlot = new QWidget(sensorDataPreventWidget);
-    customPlot->setMinimumHeight(600); // 给波形图足够的垂直空间
-    customPlot->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    customPlot->setStyleSheet(R"(
-                              QWidget {
-                              background-color: #1E1E1E; /* 黑色背景更有科技感 */
-                              border: 1px solid #333333;
-                              border-radius: 4px;
-                              }
-                              )");
-    mainLayout->addWidget(customPlot);
-    mainLayout->addStretch();
+    // 设置坐标轴颜色（白色）
+    QPen axisPen(Qt::white);
+    realtimePlot->xAxis->setBasePen(axisPen);
+    realtimePlot->xAxis->setTickLabelColor(Qt::white);
+    realtimePlot->yAxis->setBasePen(axisPen);
+    realtimePlot->yAxis->setTickLabelColor(Qt::white);
 
-    // 移除 Stretch，让数据显示在顶部；或者保留以适应大窗口
+    // 添加曲线
 
+
+    // 1. 第一条曲线：温度 (已有的 graph(0))
+    realtimePlot->addGraph();
+    realtimePlot->graph(0)->setName("温度 (℃)");
+    realtimePlot->graph(0)->setPen(QPen(Qt::red, 2)); // 温度用红色
+
+    realtimePlot->addGraph();
+    realtimePlot->graph(1)->setName("湿度 (%RH)");
+    realtimePlot->graph(1)->setPen(QPen(Qt::cyan, 2)); // 湿度用青色
+    realtimePlot->graph(1)->setBrush(QBrush(QColor(0, 255, 255, 20))); // 淡淡的青色填充;
+
+    // 3. 配置右上角图例 (Legend)
+    realtimePlot->legend->setVisible(true);
+    realtimePlot->legend->setBrush(QBrush(QColor(30, 30, 30, 150))); // 半透明深色背景
+    realtimePlot->legend->setTextColor(Qt::white);                 // 文字白色
+    realtimePlot->legend->setBorderPen(QPen(Qt::white));           // 边框白色
+    realtimePlot->axisRect()->insetLayout()->setInsetAlignment(0, Qt::AlignTop | Qt::AlignRight); // 确认为右上角
+
+    // 时间轴配置
+    QSharedPointer<QCPAxisTickerTime> timeTicker(new QCPAxisTickerTime);
+    timeTicker->setTimeFormat("%h:%m:%s");
+    realtimePlot->xAxis->setTicker(timeTicker);
+
+    // 将绘图区放入布局
+
+    mainLayout->addWidget(realtimePlot, 1); // 这里的 1 是拉伸因子，让它占据剩余空间
+
+    // --- 启动定时器 ---
+    if(!mDataTimer){
+        mDataTimer = new QTimer(this);
+        connect(mDataTimer, &QTimer::timeout, this, &MainWindow::updatePlot);
+        mDataTimer->start(50);
+        mStartTime = QDateTime::currentDateTime().toMSecsSinceEpoch() / 1000.0;
+    }
+}
+
+void MainWindow::updatePlot() {
+    if (!realtimePlot) return;
+
+    double currentTime = QDateTime::currentDateTime().toMSecsSinceEpoch() / 1000.0;
+    double key = currentTime - mStartTime;
+
+    // 获取当前选中通道的实时数据
+    int targetID = currentChannelIndex + 1;
+    double tempVal = latestTemp[targetID];
+    double humiVal = latestHumi[targetID];
+
+    // 1. 给两条曲线添加数据
+    realtimePlot->graph(0)->addData(key, tempVal); // 温度
+    realtimePlot->graph(1)->addData(key, humiVal); // 湿度
+
+    // 2. 移除 60 秒前的旧数据，防止内存溢出
+    realtimePlot->graph(0)->data()->removeBefore(key - 60);
+    realtimePlot->graph(1)->data()->removeBefore(key - 60);
+
+    // 3. 更新 X 轴范围
+    realtimePlot->xAxis->setRange(key, 8, Qt::AlignRight);
+
+    // 4. 更新 Y 轴范围
+    // 如果温湿度都在 0-100 范围内，可以固定；
+    // 如果想更智能，可以调用 rescale，但这里先固定以便观察
+    realtimePlot->yAxis->setRange(0, 100);
+    realtimePlot->replot();
 }
 
 void MainWindow::toConnect()
@@ -911,6 +997,13 @@ void MainWindow::onUpgradeFinished(bool success, QString message)
 
 void MainWindow::receSensorDataToPrevent(int index, float temp, float humity, QVector<uint8_t> time)
 {
+    // 1. 数据合法性检查 (假设 ID 为 1-16)
+        if (index < 1 || index > 16) return;
+
+        // 2. 更新内存缓存
+        latestTemp[index] = temp;
+        latestHumi[index] = humity;
+
     updateSensorUI(index - 1, temp, humity);
 }
 

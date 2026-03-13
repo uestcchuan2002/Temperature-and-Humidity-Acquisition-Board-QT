@@ -87,7 +87,6 @@ void TcpWorker::startUpgrade(QByteArray firmware)
 void TcpWorker::onReadyRead()
 {
     QByteArray data = socket->readAll();
-    qDebug() << "recv:" << data.toHex();
 
     if (m_currentState == Upgrading) {
         ackBuffer.append(data);
